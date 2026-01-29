@@ -218,4 +218,5 @@ public class SharedLockUnitTests {
         lock2.decrementWriters();
         lock3.decrementWriters();
     }
+
 }

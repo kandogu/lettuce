@@ -26,6 +26,7 @@ import io.lettuce.core.internal.LettuceAssert;
  * <li>Explicitly removes entries when writer count reaches zero for immediate cleanup</li>
  * <li>Eliminates the memory leak that occurred with per-instance ThreadLocal in connection pooling scenarios</li>
  * </ul>
+ * 
  * @author Mark Paluch
  */
 class SharedLock {
@@ -170,4 +171,5 @@ class SharedLock {
     private int getThreadWriterCount() {
         return THREAD_WRITERS.get().getOrDefault(this, 0);
     }
+
 }
