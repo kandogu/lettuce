@@ -16,7 +16,15 @@ import io.lettuce.core.internal.LettuceAssert;
  * Exclusive locking is reentrant. An exclusive lock owner is permitted to acquire and release shared locks. Shared/exclusive
  * lock requests by other threads than the thread which holds the exclusive lock, are forced to wait until the exclusive lock is
  * released.
- *
+ * <p>
+ * <b>Memory Management:</b> This implementation uses a static {@link ThreadLocal} containing a {@link WeakHashMap} to track
+ * per-thread writer counts across all {@code SharedLock} instances. This design:
+ * <ul>
+ * <li>Creates only ONE ThreadLocal entry per thread (not per SharedLock instance)</li>
+ * <li>Uses WeakHashMap so entries are automatically removed when SharedLock instances are garbage collected</li>
+ * <li>Explicitly removes entries when writer count reaches zero for immediate cleanup</li>
+ * <li>Eliminates the memory leak that occurred with per-instance ThreadLocal in connection pooling scenarios</li>
+ * </ul>
  * @author Mark Paluch
  */
 class SharedLock {
@@ -26,7 +34,8 @@ class SharedLock {
 
     private final Lock lock = new ReentrantLock();
 
-    private final ThreadLocal<Integer> threadWriters = ThreadLocal.withInitial(() -> 0);
+    private static final ThreadLocal<WeakHashMap<SharedLock, Integer>> THREAD_WRITERS = ThreadLocal
+            .withInitial(WeakHashMap::new);
 
     private volatile long writers = 0;
 
@@ -47,7 +56,8 @@ class SharedLock {
 
                 if (WRITERS.get(this) >= 0) {
                     WRITERS.incrementAndGet(this);
-                    threadWriters.set(threadWriters.get() + 1);
+                    WeakHashMap<SharedLock, Integer> map = THREAD_WRITERS.get();
+                    map.merge(this, 1, Integer::sum);
                     return;
                 }
             }
@@ -66,7 +76,8 @@ class SharedLock {
         }
 
         WRITERS.decrementAndGet(this);
-        threadWriters.set(threadWriters.get() - 1);
+        WeakHashMap<SharedLock, Integer> map = THREAD_WRITERS.get();
+        map.computeIfPresent(this, (lock, count) -> count <= 1 ? null : count - 1);
     }
 
     /**
@@ -126,7 +137,8 @@ class SharedLock {
             for (;;) {
 
                 // allow reentrant exclusive lock by comparing writers count and threadWriters count
-                if (WRITERS.compareAndSet(this, threadWriters.get(), -1)) {
+                int threadWriterCount = getThreadWriterCount();
+                if (WRITERS.compareAndSet(this, threadWriterCount, -1)) {
                     exclusiveLockOwner = Thread.currentThread();
                     return;
                 }
@@ -142,8 +154,10 @@ class SharedLock {
     private void unlockWritersExclusive() {
 
         if (exclusiveLockOwner == Thread.currentThread()) {
+            int threadWriterCount = getThreadWriterCount();
+
             // check exclusive look not reentrant first
-            if (WRITERS.compareAndSet(this, -1, threadWriters.get())) {
+            if (WRITERS.compareAndSet(this, -1, threadWriterCount)) {
                 exclusiveLockOwner = null;
                 return;
             }
@@ -152,4 +166,7 @@ class SharedLock {
         }
     }
 
+    private int getThreadWriterCount() {
+        return THREAD_WRITERS.get().getOrDefault(this, 0);
+    }
 }
