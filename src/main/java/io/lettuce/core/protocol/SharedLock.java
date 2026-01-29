@@ -1,5 +1,6 @@
 package io.lettuce.core.protocol;
 
+import java.util.WeakHashMap;
 import java.util.concurrent.atomic.AtomicLongFieldUpdater;
 import java.util.concurrent.locks.Lock;
 import java.util.concurrent.locks.ReentrantLock;
